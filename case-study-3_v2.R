@@ -1,0 +1,165 @@
+# Required libraries (install these once before running)
+# install.packages(c("shiny", "bslib", "tidyverse", "cluster", "ggplot2", "ggthemes"))
+
+library(shiny)
+library(bslib)
+library(tidyverse)
+library(cluster)
+library(ggplot2)
+library(ggthemes)
+
+# Define UI
+ui <- page_fluid(
+  titlePanel("Case Study 3: k-means Analysis of Boston Housing"),
+  
+  layout_sidebar(
+    sidebar = sidebar(
+      title = "Cluster Controls",
+      checkboxGroupInput(
+        inputId = "selected_clusters",
+        label = "Selected Clusters to Display:",
+        choices = c("Cluster 1" = "1",
+                    "Cluster 2" = "2",
+                    "Cluster 3" = "3",
+                    "Cluster 4" = "4"),
+        selected = c("1","2","3","4")
+      ),
+      hr(),
+      p("Toggle clusters on/off to explore patterns in the data."),
+      p(strong("Cluster Colors:")),
+      p(HTML("<span style='color:#1f77b4;'>■</span> Cluster 1")),
+      p(HTML("<span style='color:#ff7f0e;'>■</span> Cluster 2")),
+      p(HTML("<span style='color:#2ca02c;'>■</span> Cluster 3")),
+      p(HTML("<span style='color:#d62728;'>■</span> Cluster 4"))
+    ),
+    card(
+      card_header("K-Means Cluster Plot (clusplot)"),
+      plotOutput("clusplot", height = "400px")
+    ),
+    
+    card(
+      card_header("Scatterplot: Rooms vs. Median Value by Cluster"),
+      plotOutput("scatterplot", height = "400px")
+    ),
+    
+    card(
+      card_header("Density: Median Value by Cluster"),
+      plotOutput("densityplot", height = "400px")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  #Define cluster palette
+  cluster_palette <- c("1" = "#1f77b4",
+                       "2" = "#ff7f0e",
+                       "3" = "#2ca02c",
+                       "4" = "#d62728")
+  
+  # Reactive: Load and Process data
+  house_data <- reactive({
+    df <- read.csv("data/BostonHousing.csv")
+    
+    #Drop first column (ID), ensure numeric
+    df <- df[, -1]
+    df <- df[apply(df, 1, function(x) all(is.finite(x))), ]
+    
+    df
+  })
+  
+  # Reactive: Run k-means clustering
+  clustering <- reactive({
+    df <- house_data()
+    set.seed(123) # reproducibility
+    kmeans(df, centers = 4, nstart = 25)
+  })
+  
+  # Reactive: Create clustered dataset
+  clustered_data <- reactive({
+    df <- house_data()
+    clusters <- clustering()
+    df$Cluster <- factor(clusters$cluster)
+    df
+  })
+  
+  # Reactive: Filter data based on selected clusters
+  filtered_data <- reactive({
+    df <- clustered_data()
+    df %>% filter(Cluster %in% input$selected_clusters)
+  })
+  
+  # Output: Cluster plot
+  output$clusplot <- renderPlot({
+    req(nrow(filtered_data()) > 0)
+    req(length(input$selected_clusters) > 0)
+    
+    clusters <- clustering()
+    
+    # Create color vector: selected clusters get their color, others get gray
+    point_colors <- sapply(clusters$cluster, function(c) {
+      if (as.character(c) %in% input$selected_clusters) {
+        cluster_palette[as.character(c)]
+      } else {
+        "gray80"  # Faded color for unselected clusters
+      }
+    })
+    
+    clusplot(house_data(), clusters$cluster,
+             color = TRUE, shade = FALSE, labels = 0, lines = 0,
+             col.p = point_colors,
+             main = 'K-Means Cluster Analysis')
+  })
+  
+  # Output: Scatterplot
+  output$scatterplot <- renderPlot({
+    req(nrow(filtered_data()) >0)
+    
+    ggplot(filtered_data(), aes(x = medv, y = rm, color = Cluster)) +
+      geom_point(alpha = 0.7, size = 2) +
+      geom_smooth(se = FALSE, method = "loess") +
+      theme_minimal() +
+      labs(
+        title = "Boston Housing Clusters (Avg # of Rooms vs. Value)",
+        x = "Median Value in $1000s (medv)",
+        y = "Avg Number of Rooms per Dwelling (rm)",
+        color = "Cluster"
+      ) +
+      scale_color_manual(
+        values = cluster_palette,
+        breaks = input$selected_clusters
+      )
+  })
+  
+  # Output: Density plot
+  output$densityplot <- renderPlot({
+    req(nrow(filtered_data()) >0)
+    req(length(input$selected_clusters) >0)
+    
+    df <- filtered_data()
+    
+    # Ensure Cluster is a factor with correct levels
+    df$Cluster <- factor(df$Cluster, levels = names(cluster_palette))
+    
+    # Create plot
+    p <- ggplot(df, aes(x = medv, fill = Cluster)) +
+      geom_density(alpha = 0.4) +
+      theme_minimal() +
+      labs(
+        title = "Density of Median Value by Cluster",
+        x = "Median Value in $1000s",
+        y = "Density",
+        fill = "Cluster"
+      ) +
+      scale_fill_manual(
+        values = cluster_palette[input$selected_clusters],
+        drop = FALSE
+      )
+    
+    print(p)
+  })
+}
+
+# Run the app
+shinyApp(ui = ui, server = server)
